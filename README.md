@@ -1,29 +1,33 @@
-# ShakeLight (Flutter)
+# ShakeLight
 
-A simple Flutter cross-platform app that toggles the phone flashlight when a shake is detected from **gyroscope** readings.
+ShakeLight is a Flutter + native Android app that keeps a foreground sensor service alive, detects shake while the phone is locked, and toggles the flashlight.
 
-## Features
-
-- Uses `sensors_plus` gyroscope stream.
-- Computes rotational magnitude (`sqrt(x² + y² + z²)`).
-- Triggers flashlight ON/OFF when shake threshold is exceeded.
-- Uses a cooldown to prevent rapid repeated toggles.
-- Uses `torch_light` for camera flash control.
-
-## Setup
-
-1. Install Flutter SDK.
-2. From project root:
+## Build / run
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-## Notes
+> This repository now includes Android platform code under `android/`.
 
-- Flashlight control works only on devices with a camera flash.
-- Best tested on Android/iOS physical devices.
-- You can tune shake behavior in `lib/main.dart`:
-  - `_shakeThresholdRadPerSec`
-  - `_toggleCooldown`
+## Lock-screen mode setup (Android)
+
+1. Open app and tap **Request Camera / Notification Permissions**.
+2. Enable **Enable ShakeLight** to start the foreground service.
+3. (Recommended) Tap **Ignore battery optimizations** and allow exception.
+4. Lock the phone and shake to toggle torch.
+
+## Settings
+
+- **Sensitivity**: shake threshold (higher = harder shake needed).
+- **Cooldown**: minimum milliseconds between toggles.
+- **Start on boot**: restarts service after reboot via `BOOT_COMPLETED`.
+
+## Battery / OEM caveats
+
+Some manufacturers (MIUI, EMUI, ColorOS, etc.) aggressively stop background services. If ShakeLight stops while locked:
+
+- Disable battery optimization for ShakeLight.
+- Add app to auto-start/background whitelist in OEM settings.
+- Keep notification visibility enabled on Android 13+.

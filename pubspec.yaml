@@ -1,5 +1,5 @@
 name: shakelight
-description: A Flutter app that toggles the flashlight by shaking the phone (gyroscope based).
+description: ShakeLight foreground-service flashlight toggler for Android.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -9,8 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  sensors_plus: ^6.1.1
-  torch_light: ^1.1.0
 
 dev_dependencies:
   flutter_test:
