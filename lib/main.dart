@@ -1,9 +1,5 @@
-import 'dart:async';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
-import 'package:sensors_plus/sensors_plus.dart';
-import 'package:torch_light/torch_light.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,14 +12,53 @@ class ShakeLightApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
       title: 'ShakeLight',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
         useMaterial3: true,
       ),
       home: const ShakeLightHomePage(),
     );
+  }
+}
+
+class ShakeServiceController {
+  static const MethodChannel _channel = MethodChannel('shakelight/service');
+
+  static Future<bool> startService() async {
+    final result = await _channel.invokeMethod<bool>('startService');
+    return result ?? false;
+  }
+
+  static Future<bool> stopService() async {
+    final result = await _channel.invokeMethod<bool>('stopService');
+    return result ?? false;
+  }
+
+  static Future<bool> isRunning() async {
+    final result = await _channel.invokeMethod<bool>('isRunning');
+    return result ?? false;
+  }
+
+  static Future<void> updateSettings({
+    required double threshold,
+    required int cooldownMs,
+    required bool startOnBoot,
+  }) {
+    return _channel.invokeMethod('updateSettings', {
+      'threshold': threshold,
+      'cooldownMs': cooldownMs,
+      'startOnBoot': startOnBoot,
+    });
+  }
+
+  static Future<void> requestPermissions() {
+    return _channel.invokeMethod('requestPermissions');
+  }
+
+  static Future<void> requestIgnoreBatteryOptimizations() {
+    return _channel.invokeMethod('requestIgnoreBatteryOptimizations');
   }
 }
 
@@ -35,133 +70,159 @@ class ShakeLightHomePage extends StatefulWidget {
 }
 
 class _ShakeLightHomePageState extends State<ShakeLightHomePage> {
-  static const double _shakeThresholdRadPerSec = 6.5;
-  static const Duration _toggleCooldown = Duration(milliseconds: 900);
+  bool _enabled = false;
+  bool _running = false;
+  bool _startOnBoot = false;
 
-  StreamSubscription<GyroscopeEvent>? _gyroSubscription;
-  bool _flashOn = false;
-  bool _torchSupported = true;
-  String _statusText = 'Shake your phone to toggle the flashlight';
-  DateTime _lastToggle = DateTime.fromMillisecondsSinceEpoch(0);
+  double _threshold = 11.5;
+  double _cooldownMs = 1200;
+
+  String _statusText = 'Service is stopped';
 
   @override
   void initState() {
     super.initState();
-    _initializeTorchAndSensors();
+    _refreshRunningStatus();
   }
 
-  Future<void> _initializeTorchAndSensors() async {
-    final supported = await _isTorchSupported();
-    if (!mounted) {
-      return;
-    }
+  Future<void> _refreshRunningStatus() async {
+    final running = await ShakeServiceController.isRunning();
+    if (!mounted) return;
 
     setState(() {
-      _torchSupported = supported;
-      _statusText = supported
-          ? 'Ready. Shake your phone to turn flashlight on/off.'
-          : 'Torch not available on this device.';
-    });
-
-    if (supported) {
-      _listenToGyroscope();
-    }
-  }
-
-  Future<bool> _isTorchSupported() async {
-    try {
-      return await TorchLight.isTorchAvailable();
-    } on Exception {
-      return false;
-    }
-  }
-
-  void _listenToGyroscope() {
-    _gyroSubscription?.cancel();
-    _gyroSubscription = gyroscopeEventStream().listen((event) {
-      final rotationMagnitude = sqrt(
-        (event.x * event.x) + (event.y * event.y) + (event.z * event.z),
-      );
-
-      final now = DateTime.now();
-      final canToggle = now.difference(_lastToggle) >= _toggleCooldown;
-
-      if (rotationMagnitude >= _shakeThresholdRadPerSec && canToggle) {
-        _lastToggle = now;
-        _toggleFlashlight();
-      }
+      _running = running;
+      _enabled = running;
+      _statusText = running ? 'Running (lock screen supported)' : 'Stopped';
     });
   }
 
-  Future<void> _toggleFlashlight() async {
-    try {
-      if (_flashOn) {
-        await TorchLight.disableTorch();
-      } else {
-        await TorchLight.enableTorch();
-      }
+  Future<void> _onMasterToggle(bool value) async {
+    setState(() {
+      _enabled = value;
+    });
 
-      if (!mounted) {
-        return;
-      }
+    await ShakeServiceController.updateSettings(
+      threshold: _threshold,
+      cooldownMs: _cooldownMs.round(),
+      startOnBoot: _startOnBoot,
+    );
 
-      setState(() {
-        _flashOn = !_flashOn;
-        _statusText = _flashOn
-            ? 'Flashlight is ON. Shake again to turn it OFF.'
-            : 'Flashlight is OFF. Shake again to turn it ON.';
-      });
-    } on Exception {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _statusText =
-            'Could not change flashlight state. Check permissions/device support.';
-      });
+    if (value) {
+      await ShakeServiceController.startService();
+    } else {
+      await ShakeServiceController.stopService();
     }
+
+    await _refreshRunningStatus();
   }
 
-  @override
-  void dispose() {
-    _gyroSubscription?.cancel();
-    if (_flashOn) {
-      TorchLight.disableTorch();
-    }
-    super.dispose();
+  Future<void> _saveSettings() async {
+    await ShakeServiceController.updateSettings(
+      threshold: _threshold,
+      cooldownMs: _cooldownMs.round(),
+      startOnBoot: _startOnBoot,
+    );
+    await _refreshRunningStatus();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('ShakeLight')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _flashOn ? Icons.flash_on : Icons.flash_off,
-                size: 120,
-                color: _flashOn ? Colors.amber.shade700 : Colors.grey,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                _statusText,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Detection uses gyroscope magnitude with a short cooldown\n'
-                'to avoid accidental rapid toggles.',
-                textAlign: TextAlign.center,
-              ),
-            ],
+      appBar: AppBar(
+        title: const Text('ShakeLight Settings'),
+        actions: [
+          IconButton(
+            onPressed: _refreshRunningStatus,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh service status',
           ),
-        ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: SwitchListTile(
+              value: _enabled,
+              title: const Text('Enable ShakeLight'),
+              subtitle: const Text('Runs a foreground service for lock-screen shake detection.'),
+              onChanged: _onMasterToggle,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: Icon(_running ? Icons.check_circle : Icons.pause_circle),
+            title: Text(_running ? 'Running' : 'Stopped'),
+            subtitle: Text(_statusText),
+          ),
+          const Divider(),
+          ListTile(
+            title: const Text('Sensitivity (threshold)'),
+            subtitle: Text(_threshold.toStringAsFixed(1)),
+          ),
+          Slider(
+            min: 6,
+            max: 20,
+            divisions: 28,
+            value: _threshold,
+            label: _threshold.toStringAsFixed(1),
+            onChanged: (value) => setState(() => _threshold = value),
+            onChangeEnd: (_) => _saveSettings(),
+          ),
+          ListTile(
+            title: const Text('Cooldown (milliseconds)'),
+            subtitle: Text('${_cooldownMs.round()} ms'),
+          ),
+          Slider(
+            min: 400,
+            max: 3000,
+            divisions: 26,
+            value: _cooldownMs,
+            label: '${_cooldownMs.round()} ms',
+            onChanged: (value) => setState(() => _cooldownMs = value),
+            onChangeEnd: (_) => _saveSettings(),
+          ),
+          SwitchListTile(
+            value: _startOnBoot,
+            title: const Text('Start on boot'),
+            subtitle: const Text('Automatically start ShakeLight after reboot.'),
+            onChanged: (value) async {
+              setState(() => _startOnBoot = value);
+              await _saveSettings();
+            },
+          ),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: () async {
+              await ShakeServiceController.requestPermissions();
+              await _refreshRunningStatus();
+            },
+            icon: const Icon(Icons.security),
+            label: const Text('Request Camera / Notification Permissions'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: ShakeServiceController.requestIgnoreBatteryOptimizations,
+            icon: const Icon(Icons.battery_alert),
+            label: const Text('Ignore battery optimizations'),
+          ),
+          const SizedBox(height: 16),
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Help', style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(height: 8),
+                  Text('• Keep ShakeLight enabled to detect shake while the screen is off.'),
+                  Text('• If detection stops in your pocket, disable battery optimization for this app.'),
+                  Text('• Some OEMs kill background services aggressively; whitelist this app in vendor settings.'),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
